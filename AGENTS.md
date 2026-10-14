@@ -96,10 +96,61 @@ runs them one at a time, reporting progress.
 - The model call is injected (`ask=`), so `tests/test_planner.py` runs it with a
   stub and no network.
 
+## macOS integration (Stage D)
+
+`core/macos.py` holds every macOS-specific call, and **nothing in it raises**: a
+missing tool, denied permission or absent key returns `None`/a sentinel, so a
+Mac that cannot answer still gets a working assistant.
+
+- `parse_*` functions are **pure** (they take command output as text) and are the
+  only part testable on the Linux dev box. Keep new parsing logic on that side.
+- Brightness has no built-in macOS read/set. `core/macos.py` uses the `brightness`
+  CLI (brew) when present, else relative F2/F1 key codes (144/145). Without the
+  CLI `brightness_get()` returns `None`, so the undo path correctly declines.
+- Window ops (System Events) need **Accessibility** permission; without it
+  osascript returns -1743 and the functions report unavailable.
+- **macOS exposes no CPU temperature.** Do not fake it. `system_monitor` and
+  `mac_control` report the thermal *throttle* level (`pmset -g therm`
+  `CPU_Speed_Limit`) and battery instead.
+- `actions/mac_control.py` is the voice-facing wrapper; it returns a plain
+  "macOS-only" sentence on Windows/Linux.
+
+## Productivity and developer actions (Stage E)
+
+- `core/timers.py` — in-process countdown timers, distinct from `reminder.py`
+  (which uses the OS scheduler and survives quitting). Clock and notifier are
+  **injectable** and firing is an explicit `tick()`, so tests are deterministic.
+  `main.py` binds the notifier to `speak` and starts the poll thread.
+- `actions/productivity.py` — notes go through the existing memory store
+  (category `notes`), so they stay recallable; timers use `core/timers.py`.
+- `actions/developer.py` — the one tool that runs commands. Allowlist by
+  **executable basename** (`git`, `python`, `pytest`, `pip`, `node`, `npm`, `ls`,
+  `cat`), git subcommand denylist (`push`/`reset`/`clean`/`remote`/…), cwd
+  confined to the project root, bounded timeouts, and **never a shell** (argv
+  lists only). Declared `privileged_destructive`, so the confirm gate applies.
+  The confirm gate is the *second* line of defence, not the first — keep the
+  allowlist tight.
+
+## Memory index (Stage G)
+
+`memory/memory_store.py` is a **SQLite + FTS5 index of `long_term.json`** — an
+index, not a replacement. The JSON stays the source of truth.
+
+- `save_memory()` calls `sync_index()`; `main.py` rebuilds the index once at
+  startup so a pre-existing memory is searchable immediately.
+- `search_memory()` uses the index when available and falls back to the old
+  lexical scorer otherwise. `export_memory()` merges over a base dict so keys the
+  DB does not model (`sessions`, `monitors`) survive.
+- Degrades safely: no FTS5 → LIKE; no DB → JSON-only. A broken index must never
+  cost the user their memory.
+- The DB is `memory/jarvis_memory.db` (git-ignored). Tests redirect `DB_PATH` via
+  the `isolated_memory` fixture in `tests/conftest.py` — **keep that fixture in
+  step** or tests will write the developer's real DB.
+
 ## Line endings
 
 Most files in this repository are **CRLF** (it was authored on Windows). When
-editing an existing file, preserve its endings � a tool that rewrites the whole
+editing an existing file, preserve its endings — a tool that rewrites the whole
 file with LF turns a one-line change into a whole-file diff and makes the branch
 unreviewable. New files use LF. Check with `git diff --stat`; if a file you
 barely touched shows hundreds of changed lines, it is line endings, not content.
