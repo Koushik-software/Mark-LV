@@ -5,6 +5,8 @@ import threading
 import time
 from pathlib import Path
 
+from core.sanitizer import sanitize
+
 # ── Gemini grounding quota circuit breaker ────────────────────────────────────
 # The google_search grounding tool has its own small quota, separate from plain
 # generation.  Once it is spent every call returns 429 — so retrying it at the
@@ -367,23 +369,33 @@ def web_search(
 
     try:
         if mode == "compare" and items:
-            return _compare(items, aspect)
-        if mode == "news":
-            return _news(query)
-        if mode == "research":
-            return _research(query)
-        if mode == "price":
-            return _price(query)
-        return _search(query)
+            out = _compare(items, aspect)
+        elif mode == "news":
+            out = _news(query)
+        elif mode == "research":
+            out = _research(query)
+        elif mode == "price":
+            out = _price(query)
+        else:
+            out = _search(query)
 
     except Exception as e:
         print(f"[WebSearch] ❌ All backends failed: {e}")
         return f"Search failed: {e}"
 
+    # Everything above came off the open web — except a "no results" line, which
+    # is our own text. Fence the web content before the model sees it so a page
+    # cannot smuggle instructions in as if they were the assistant's own
+    # reasoning (core/sanitizer.py).
+    if out.startswith("No results") or out.startswith("No news"):
+        return out
+    return sanitize(out, source=f"web search: {query or ', '.join(items)}")
+
 
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "web_search",
+    "permission": "read_only",
     "description": "Searches the web. Use for ANY question about current facts, events, prices, or topics — always prefer this over guessing. Modes: 'search' (default), 'news' (latest headlines on a topic), 'research' (deep comprehensive answer), 'price' (product cost lookup), 'compare' (side-by-side comparison of items).",
     "parameters": {
         "type": "OBJECT",

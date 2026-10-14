@@ -34,6 +34,17 @@ def _opt_upper(value, allowed: tuple[str, ...]) -> Optional[str]:
     return v if v in allowed else None
 
 
+def _opt_permission(value) -> Optional[str]:
+    """Normalise a declared `permission` value, or None if it is not a tier.
+
+    Kept local (not imported from core.permissions) so the loader stays free of
+    core internals; tests/test_permissions.py pins the two lists together."""
+    allowed = ("read_only", "reversible", "external_interaction",
+               "privileged_destructive")
+    v = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return v if v in allowed else None
+
+
 @dataclass
 class PluginRecord:
     name: str
@@ -46,6 +57,7 @@ class PluginRecord:
     settings: Optional[dict] = None   # optional PLUGIN_SETTINGS schema (config fields)
     behavior: Optional[str] = None    # None = the API's default (blocking)
     scheduling: Optional[str] = None  # None = the API's default (WHEN_IDLE)
+    permission: Optional[str] = None  # None = core.permissions.DEFAULT_TIER
 
 
 class PluginRegistry:
@@ -189,7 +201,8 @@ def _validate(module, filename: str) -> PluginRecord:
     return PluginRecord(name=name, description=description.strip(), parameters=parameters,
                          run=run_fn, file=filename, valid=True, error="", settings=settings,
                          behavior=_opt_upper(plugin_meta.get("behavior"), _BEHAVIORS),
-                         scheduling=_opt_upper(plugin_meta.get("scheduling"), _SCHEDULING))
+                         scheduling=_opt_upper(plugin_meta.get("scheduling"), _SCHEDULING),
+                         permission=_opt_permission(plugin_meta.get("permission")))
 
 
 def _load_error(path: Path, plugins_dir: Path, exc: Exception) -> str:

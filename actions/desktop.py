@@ -485,6 +485,7 @@ def desktop_control(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "desktop_control",
+    "permission": "reversible",
     "description": "Controls the desktop: wallpaper, organize, clean, list, stats.",
     "parameters": {
         "type": "OBJECT",

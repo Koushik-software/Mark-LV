@@ -1062,6 +1062,7 @@ if __name__ == "__main__":
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "game_updater",
+    "permission": "external_interaction",
     "description": "THE ONLY tool for ANY Steam or Epic Games request. Use for: installing, downloading, updating games, listing installed games, checking download status, scheduling updates. ALWAYS call directly for any Steam/Epic/game request. NEVER use browser_control or web_search for Steam/Epic.",
     "parameters": {
         "type": "OBJECT",

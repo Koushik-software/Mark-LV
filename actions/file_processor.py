@@ -27,6 +27,7 @@ from datetime import datetime
 
 # Model choice, timeout and fallback ladder all live in core/gemini.py.
 from core import gemini
+from core.sanitizer import sanitize
 
 def _get_api_key() -> str:
     config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
@@ -806,7 +807,10 @@ def file_processor(parameters: dict, player=None, speak=None) -> str:
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")[:10000]
             model   = _gemini_client()
-            prompt  = f"File: {path.name}\nContent preview:\n{content}\n\nTask: {action or instruction or 'Describe what this file contains and what can be done with it.'}"
+            # The file's own bytes go into this prompt. Fence them so a file that
+            # contains instructions is read as data, not obeyed (core/sanitizer.py).
+            fenced  = sanitize(content, source=f"file: {path.name}")
+            prompt  = f"File: {path.name}\nContent preview:\n{fenced}\n\nTask: {action or instruction or 'Describe what this file contains and what can be done with it.'}"
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
@@ -844,6 +848,7 @@ def file_processor(parameters: dict, player=None, speak=None) -> str:
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "file_processor",
+    "permission": "read_only",
     "description": "Processes any file that the user has uploaded or dropped onto the interface. Use this when the user refers to an uploaded file and wants an action on it. Supports: images (describe/ocr/resize/compress/convert), PDFs (summarize/extract_text/to_word), Word docs & text files (summarize/fix/reformat/translate), CSV/Excel (analyze/stats/filter/sort/convert), JSON/XML (validate/format/analyze), code files (explain/review/fix/optimize/run/document/test), audio (transcribe/trim/convert/info), video (trim/extract_audio/extract_frame/compress/transcribe/info), archives (list/extract), presentations (summarize/extract_text). ALWAYS call this tool when a file has been uploaded and the user gives a command about it. If the user's command is ambiguous, pick the most logical action for that file type.",
     "parameters": {
         "type": "OBJECT",

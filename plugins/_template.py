@@ -7,6 +7,7 @@ No other file needs to change — JARVIS discovers this automatically at startup
 
 PLUGIN = {
     "name": "my_plugin",                     # snake_case, unique, ^[a-zA-Z_][a-zA-Z0-9_]{0,63}$
+    "permission": "external_interaction",    # see note below; optional but strongly recommended
     "description": (
         "One or two sentences Gemini uses to decide when to call this tool. "
         "Be explicit about trigger phrases and, if it could be confused with "
@@ -21,6 +22,23 @@ PLUGIN = {
         "required": [],   # omit or leave empty for a zero-argument tool
     },
 }
+# permission — one of the four tiers in core/permissions.py:
+#   "read_only"              looks and reports; nothing on the machine changes.
+#   "reversible"             changes something that can be taken back (push an
+#                            undo closure via core.undo.push_undo).
+#   "external_interaction"   acts outside this machine — sends a message, fills a
+#                            form. Runs, but is announced in the activity log.
+#   "privileged_destructive" cannot be undone (shutdown, delete, WiFi off). Held
+#                            behind the on-screen CONFIRM gate — a click is the
+#                            only way through; the model cannot satisfy it.
+# Omit it and the plugin is treated as external_interaction (announced). Do NOT
+# claim read_only unless it genuinely only reads.
+#
+# If your plugin returns text fetched from outside this machine (a web page, a
+# file, an API), fence it before returning, so the model reads it as data rather
+# than instruction:
+#     from core.sanitizer import sanitize
+#     return sanitize(raw_text, source="my_plugin: <where it came from>")
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
     """

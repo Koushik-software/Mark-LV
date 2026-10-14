@@ -588,6 +588,7 @@ def code_helper(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "code_helper",
+    "permission": "reversible",
     "description": "Writes, edits, explains, runs, or builds code files.",
     "parameters": {
         "type": "OBJECT",

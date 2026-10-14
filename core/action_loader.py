@@ -54,6 +54,18 @@ def _opt_upper(value, allowed: tuple[str, ...]) -> Optional[str]:
     return v if v in allowed else None
 
 
+def _opt_permission(value) -> Optional[str]:
+    """Normalise a declared `permission` value, or None if it is not a tier.
+
+    The list is kept here rather than imported from core.permissions so the
+    loader stays import-free of core internals; the two are pinned together by
+    tests/test_permissions.py."""
+    allowed = ("read_only", "reversible", "external_interaction",
+               "privileged_destructive")
+    v = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return v if v in allowed else None
+
+
 @dataclass
 class ActionRecord:
     name: str
@@ -65,6 +77,7 @@ class ActionRecord:
     error: str = ""
     behavior: Optional[str] = None     # None = the API's default (blocking)
     scheduling: Optional[str] = None   # None = the API's default (WHEN_IDLE)
+    permission: Optional[str] = None   # None = core.permissions.DEFAULT_TIER
 
 
 class ActionRegistry:
@@ -151,7 +164,8 @@ def _validate(module, filename: str) -> ActionRecord:
     return ActionRecord(name=name, description=description.strip(), parameters=parameters,
                         handler=handler, file=filename, valid=True, error="",
                         behavior=_opt_upper(tool.get("behavior"), _BEHAVIORS),
-                        scheduling=_opt_upper(tool.get("scheduling"), _SCHEDULING))
+                        scheduling=_opt_upper(tool.get("scheduling"), _SCHEDULING),
+                        permission=_opt_permission(tool.get("permission")))
 
 
 def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,

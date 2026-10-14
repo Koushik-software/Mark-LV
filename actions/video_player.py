@@ -274,6 +274,7 @@ def _say(player, instruction: str) -> None:
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "video_player",
+    "permission": "reversible",
     "description": (
         "If user wants to open a video on YouTube, he will tell you that specifically"
         "If user wants to play a video, then he wants to call this feature"

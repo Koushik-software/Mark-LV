@@ -77,6 +77,9 @@ from core                     import gemini as _gemini
 from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
 from core                      import confirm as confirm_gate
+from core                      import permissions as perms
+from core                      import planner
+from core                      import sanitizer
 from core                      import audio_devices
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
@@ -637,6 +640,36 @@ class JarvisLive:
         self.ui.get_plugin_settings = self._plugin_registry.settings_schemas  # ⚙ settings tab
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
 
+        # ── Permissions ──────────────────────────────────────────────────────
+        # Read the `permission` key each action/plugin declared into the central
+        # registry, so dispatch can apply a tool's tier before it runs. Core
+        # inline tools are classified in core/permissions.py itself. A tool that
+        # declared nothing stays at the external default and is announced.
+        _classified = perms.load_from_registries(
+            action_registry=self._action_registry,
+            plugin_registry=self._plugin_registry,
+        )
+        print(f"[Permissions] {_classified} action/plugin tier(s) declared.")
+
+        # ── Planner ──────────────────────────────────────────────────────────
+        # The planner is opt-in: the model calls plan_task itself, only for a
+        # request with several dependent steps. It gets the name+description of
+        # every tool so it can decompose against what actually exists, and the
+        # runner below is how it executes — through this class's own dispatcher,
+        # so every step passes the same permission tiers as a normal call.
+        _plan_tools: dict[str, str] = {}
+        for _d in (TOOL_DECLARATIONS
+                   + self._action_registry.get_tool_declarations()
+                   + self._plugin_registry.get_tool_declarations()):
+            _n = _d.get("name") if isinstance(_d, dict) else getattr(_d, "name", "")
+            _desc = _d.get("description", "") if isinstance(_d, dict) else getattr(_d, "description", "")
+            if _n and _n != "plan_task":     # never let a plan plan itself
+                _plan_tools[_n] = _desc
+        self._planner = planner.get_planner()
+        self._planner.set_tools(_plan_tools)
+        planner.bind_runner(self._plan_and_run)
+        print(f"[Planner] {len(_plan_tools)} tools available to plan against.")
+
         # ── Wake word ────────────────────────────────────────────────────────
         # _awake gates the mic (see _listen_audio) and the background speakers.
         # It is True whenever wake word is OFF, so default behaviour is unchanged.
@@ -1123,10 +1156,51 @@ class JarvisLive:
 
         return out
 
+    # ── Planner ──────────────────────────────────────────────────────────────
+    # Called by the plan_task action, which runs on an executor thread. So this
+    # builds the plan off the event loop (the planning call is a blocking HTTP
+    # request) and then schedules the actual step execution back onto the loop,
+    # where the session lives, blocking the executor thread until it finishes.
+
+    async def _plan_step_dispatch(self, tool: str, args: dict) -> str:
+        """Run one planned step through the same dispatcher a normal tool call
+        uses — so permission tiers, confirmation and error handling all apply
+        exactly as they would if the model had called the tool directly."""
+        fc = types.FunctionCall(name=tool, args=dict(args or {}), id=f"plan-{tool}")
+        resp = await self._execute_tool(fc)
+        return str((resp.response or {}).get("result", "") or "Done.")
+
+    def _plan_and_run(self, goal: str, on_progress=None) -> str:
+        if not self._loop:
+            return "I cannot run a multi-step plan before I am connected."
+
+        plan = self._planner.make_plan(goal)
+        if plan.is_empty():
+            return (f"I could not break '{goal}' into steps with the tools I "
+                    f"have. I will handle it directly.")
+
+        def say(msg: str) -> None:
+            try:
+                self.ui.write_log(f"[Plan] {msg}")
+            except Exception:
+                pass
+            if on_progress:
+                try:
+                    on_progress(msg)
+                except Exception:
+                    pass
+
+        say(self._planner.describe(plan))
+        fut = asyncio.run_coroutine_threadsafe(
+            self._planner.run_plan_async(plan, self._plan_step_dispatch,
+                                         on_progress=say),
+            self._loop,
+        )
+        return fut.result(timeout=600)
+
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
-
         print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
@@ -1245,22 +1319,39 @@ class JarvisLive:
                     args["file_path"] = self.ui.current_file
                 _ctx = {"player": self.ui, "speak": self.speak,
                         "response": None, "session_memory": None}
-                r = await loop.run_in_executor(None, lambda: self._action_registry.run(name, args, _ctx))
+                # Apply the tool's permission tier before it runs: read-only and
+                # reversible tools run at once, external ones are announced, and
+                # the irreversible ones are parked behind the HUD confirm gate.
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: perms.enforce(
+                        name,
+                        lambda: self._action_registry.run(name, args, _ctx),
+                        announce=self.ui.write_log,
+                    ),
+                )
                 result = r or "Done."
-                # web_search: mirror results to the on-screen content panel
+                # web_search: mirror results to the on-screen content panel.
+                # The result is fenced for the model (core/sanitizer.py); the
+                # panel shows the underlying page text without the fence.
                 if (name == "web_search" and r
                         and not r.startswith("No results")
                         and not r.startswith("Search failed")):
                     _mode  = args.get("mode", "search")
                     _query = args.get("query") or ", ".join(args.get("items", []))
                     _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                    self.ui.show_content(_label, r)
+                    self.ui.show_content(_label, sanitizer.unwrap(r))
 
             else:
                 if self._plugin_registry.has(name):
                     r = await loop.run_in_executor(
                         None,
-                        lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
+                        lambda: perms.enforce(
+                            name,
+                            lambda: self._plugin_registry.run(
+                                name, args, player=self.ui, session_memory=None),
+                            announce=self.ui.write_log,
+                        ),
                     )
                     result = r or "Done."
                 else:
