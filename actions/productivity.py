@@ -34,8 +34,13 @@ def _parse_duration(text: str) -> int | None:
         total = h * 3600 + m * 60 + s
         return total or None
 
-    # Verbose form: "10 minutes", "2 hours", "45 secs"
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(hour|hr|h|minute|min|m|second|sec|s)\b", t)
+    # Verbose form: "10 minutes", "2 hours", "45 secs". Longer unit names come
+    # first so the alternation does not stop at a shorter prefix, and the plural
+    # `s?` sits before the word boundary — without it "minutes" matches neither
+    # "minute" (no boundary before the s) nor "min" (same), and the parse fails.
+    m = re.search(
+        r"(\d+(?:\.\d+)?)\s*"
+        r"(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b", t)
     if m:
         n = float(m.group(1))
         unit = m.group(2)

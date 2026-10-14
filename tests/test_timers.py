@@ -98,3 +98,37 @@ def test_no_notifier_is_fine():
     m.start(1, "x")
     m._clock.advance(2)
     assert m.tick() == ["x"]
+
+
+# ── duration parsing (actions/productivity.py) ───────────────────────────────
+# A "10 minutes" request once silently failed to parse, so these pin the units.
+
+def test_parse_duration_plural_units():
+    from actions.productivity import _parse_duration
+    assert _parse_duration("10 minutes") == 600
+    assert _parse_duration("1 minute") == 60
+    assert _parse_duration("2 hours") == 7200
+    assert _parse_duration("45 secs") == 45
+    assert _parse_duration("30 seconds") == 30
+
+
+def test_parse_duration_abbreviations_and_compounds():
+    from actions.productivity import _parse_duration
+    assert _parse_duration("30s") == 30
+    assert _parse_duration("5 min") == 300
+    assert _parse_duration("10m") == 600
+    assert _parse_duration("1h") == 3600
+    assert _parse_duration("1h30m") == 5400
+    assert _parse_duration("1.5 hours") == 5400
+
+
+def test_parse_duration_bare_number_is_minutes():
+    from actions.productivity import _parse_duration
+    assert _parse_duration("5") == 300
+
+
+def test_parse_duration_rejects_nonsense():
+    from actions.productivity import _parse_duration
+    assert _parse_duration("soon") is None
+    assert _parse_duration("10 minuets") is None
+    assert _parse_duration("") is None
