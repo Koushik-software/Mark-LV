@@ -96,6 +96,15 @@ runs them one at a time, reporting progress.
 - The model call is injected (`ask=`), so `tests/test_planner.py` runs it with a
   stub and no network.
 
+## Line endings
+
+Most files in this repository are **CRLF** (it was authored on Windows). When
+editing an existing file, preserve its endings Ñ a tool that rewrites the whole
+file with LF turns a one-line change into a whole-file diff and makes the branch
+unreviewable. New files use LF. Check with `git diff --stat`; if a file you
+barely touched shows hundreds of changed lines, it is line endings, not content.
+`git diff --ignore-cr-at-eol` shows the true change.
+
 ## Testing
 
 No CI and no test suite existed before Stage A2. Tests live in `tests/`, run with:
