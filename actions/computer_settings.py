@@ -63,9 +63,13 @@ def volume_up():
     if _OS == "Windows":
         for _ in range(5): pyautogui.press("volumeup")
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e",
-            "set volume output volume (output volume of (get volume settings) + 10)"],
-            capture_output=True)
+        cur = macos.volume_get()
+        if cur is not None:
+            macos.volume_set(min(100, cur + 10))
+        else:
+            subprocess.run(["osascript", "-e",
+                "set volume output volume (output volume of (get volume settings) + 10)"],
+                capture_output=True)
     else:
         subprocess.run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", "+10%"],
             capture_output=True)
@@ -74,9 +78,13 @@ def volume_down():
     if _OS == "Windows":
         for _ in range(5): pyautogui.press("volumedown")
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e",
-            "set volume output volume (output volume of (get volume settings) - 10)"],
-            capture_output=True)
+        cur = macos.volume_get()
+        if cur is not None:
+            macos.volume_set(max(0, cur - 10))
+        else:
+            subprocess.run(["osascript", "-e",
+                "set volume output volume (output volume of (get volume settings) - 10)"],
+                capture_output=True)
     else:
         subprocess.run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", "-10%"],
             capture_output=True)
@@ -85,8 +93,7 @@ def volume_mute():
     if _OS == "Windows":
         pyautogui.press("volumemute")
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e", "set volume with output muted"],
-            capture_output=True)
+        macos.mute(True)
     else:
         subprocess.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"],
             capture_output=True)
@@ -111,9 +118,7 @@ def volume_get() -> int | None:
                 return 0
             return max(0, min(100, round(10 ** (db / 20) * 100)))
         if _OS == "Darwin":
-            r = subprocess.run(["osascript", "-e", "output volume of (get volume settings)"],
-                               capture_output=True, text=True, timeout=5)
-            return max(0, min(100, int(r.stdout.strip())))
+            return macos.volume_get()
         r = subprocess.run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"],
                            capture_output=True, text=True, timeout=5)
         m = re.search(r"(\d+)%", r.stdout)
@@ -186,8 +191,7 @@ def volume_set(value: int):
             pyautogui.press("volumemute")
             pyautogui.press("volumemute")
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e", f"set volume output volume {value}"],
-            capture_output=True)
+        macos.volume_set(value)
         return
     else:
         subprocess.run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{value}%"],

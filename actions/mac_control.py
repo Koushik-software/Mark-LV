@@ -6,11 +6,13 @@ the tool reports that plainly instead of failing.
 
 WHAT IT CAN DO
   telemetry    — battery %, charge state, time remaining, thermal throttle
-                 level, current brightness. Read-only.
+                 level, CPU brand, load averages, current brightness. Read-only.
   list_apps    — apps with a visible window.
   frontmost    — the app currently in front.
   focus_app    — bring a named app to the front.
   move_window  — move/resize the front window to x,y,w,h.
+  window_layout— snap the front window: left, right, top, bottom, corners,
+                 full (maximise) or center.
   brightness_* — read, set, step.
 
 WHAT IT CANNOT DO
@@ -70,6 +72,20 @@ def mac_control(parameters: dict, player=None, session_memory=None) -> str:
         return ("I could not move the window — this needs Accessibility access, "
                 "or no window is in front.")
 
+    if action in ("window_layout", "snap", "arrange", "tile", "layout"):
+        name = (params.get("layout") or params.get("value")
+                or params.get("position") or "").strip()
+        if not name:
+            return ("Which layout? I know left, right, top, bottom, the four "
+                    "corners, full and center.")
+        if macos.snap_front_window(name):
+            return f"Snapped the front window to the {name.replace('_', ' ')}."
+        if macos.resolve_layout(name) is None:
+            return (f"I do not know a '{name}' layout. Try left, right, top, "
+                    f"bottom, a corner, full or center.")
+        return ("I could not move the window — this needs Accessibility access, "
+                "or no window is in front.")
+
     if action in ("brightness_get", "get_brightness"):
         v = macos.brightness_get()
         return f"Brightness is at {v}%." if v is not None else \
@@ -124,6 +140,11 @@ def _telemetry() -> str:
         parts.append(line)
     if "brightness" in t:
         parts.append(f"brightness {t['brightness']}%")
+    if t.get("cpu_brand"):
+        parts.append(t["cpu_brand"])
+    load = t.get("load") or {}
+    if "load_1m" in load:
+        parts.append(f"load {load['load_1m']:.2f}")
 
     therm = t.get("thermal") or {}
     limit = therm.get("CPU_Speed_Limit")
@@ -142,10 +163,11 @@ TOOL = {
     "permission": "reversible",
     "description": (
         "macOS-only: read Mac telemetry (battery, charge, time remaining, "
-        "thermal throttling, brightness), list or switch apps, move the front "
-        "window, and adjust brightness. Use for Mac-specific requests like "
-        "'how's my battery', 'what's in front', 'switch to Safari', 'move this "
-        "window to the left', 'dim the screen'. For volume use computer_settings. "
+        "thermal throttling, CPU brand, load averages, brightness), list or "
+        "switch apps, move or snap the front window, and adjust brightness. Use "
+        "for Mac-specific requests like 'how's my battery', 'what's in front', "
+        "'switch to Safari', 'move this window to the left', 'maximise this', "
+        "'dim the screen'. For volume use computer_settings. "
         "Does NOT report CPU temperature — macOS does not expose it."
     ),
     "parameters": {
@@ -155,13 +177,19 @@ TOOL = {
                 "type": "STRING",
                 "description": (
                     "telemetry | list_apps | frontmost | focus_app | "
-                    "move_window | brightness_get | brightness_set | "
-                    "brightness_up | brightness_down"
+                    "move_window | window_layout | brightness_get | "
+                    "brightness_set | brightness_up | brightness_down"
                 ),
             },
             "app": {
                 "type": "STRING",
                 "description": "App name for focus_app",
+            },
+            "layout": {
+                "type": "STRING",
+                "description": ("Window layout for window_layout: left, right, "
+                                "top, bottom, top_left, top_right, bottom_left, "
+                                "bottom_right, full, center"),
             },
             "x": {"type": "INTEGER", "description": "Window x for move_window"},
             "y": {"type": "INTEGER", "description": "Window y for move_window"},

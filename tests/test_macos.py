@@ -122,3 +122,109 @@ def test_off_macos_returns_none_not_raise():
 def test_run_never_raises_on_bad_command():
     # A command that cannot exist must come back as None, not an exception.
     assert macos._run(["/nonexistent/binary/xyz"]) is None
+
+
+# ── CPU brand and load (sysctl) ──────────────────────────────────────────────
+
+def test_parse_brand_string():
+    assert macos.parse_brand_string("Intel(R) Core(TM) i5-8210Y CPU @ 1.60GHz\n") \
+        == "Intel(R) Core(TM) i5-8210Y CPU @ 1.60GHz"
+    assert macos.parse_brand_string("") is None
+    assert macos.parse_brand_string("   ") is None
+
+
+def test_parse_loadavg():
+    load = macos.parse_loadavg("{ 1.52 1.44 1.38 }")
+    assert load == {"load_1m": 1.52, "load_5m": 1.44, "load_15m": 1.38}
+
+
+def test_parse_loadavg_malformed_is_empty():
+    assert macos.parse_loadavg("") == {}
+    assert macos.parse_loadavg("nonsense") == {}
+    assert macos.parse_loadavg("{ 1.0 2.0 }") == {}   # fewer than three numbers
+
+
+# ── volume (get/set, mute preservation) ──────────────────────────────────────
+
+VOLUME_SETTINGS = ("output volume:50, input volume:100, "
+                   "alert volume:100, output muted:false")
+
+
+def test_parse_volume_settings():
+    v = macos.parse_volume_settings(VOLUME_SETTINGS)
+    assert v == {"output_volume": 50, "muted": False}
+
+
+def test_parse_volume_settings_muted_true():
+    v = macos.parse_volume_settings("output volume:0, output muted:true")
+    assert v == {"output_volume": 0, "muted": True}
+
+
+def test_parse_volume_settings_empty():
+    assert macos.parse_volume_settings("") == {}
+
+
+def test_script_set_volume_preserves_mute_by_default():
+    script = macos.script_set_volume(70)
+    assert "set volume output volume 70" in script
+    # reads the flag first, restores it after — never a window of unwanted audio
+    assert "output muted of (get volume settings)" in script
+    assert script.strip().endswith("set volume output muted m")
+
+
+def test_script_set_volume_without_preserve():
+    assert macos.script_set_volume(70, preserve_mute=False) == \
+        "set volume output volume 70"
+
+
+def test_script_set_volume_clamps():
+    assert "output volume 100" in macos.script_set_volume(999)
+    assert "output volume 0" in macos.script_set_volume(-5)
+
+
+# ── window layouts ───────────────────────────────────────────────────────────
+
+def test_resolve_layout_names_and_aliases():
+    assert macos.resolve_layout("left") == "left"
+    assert macos.resolve_layout("maximize") == "full"
+    assert macos.resolve_layout("Left Half") == "left"
+    assert macos.resolve_layout("top-right") == "top_right"
+    assert macos.resolve_layout("middle") == "center"
+
+
+def test_resolve_layout_unknown_is_none():
+    assert macos.resolve_layout("diagonal") is None
+    assert macos.resolve_layout("") is None
+
+
+def test_layout_geometry_left_half():
+    assert macos.layout_geometry("left", 1440, 900) == (0, 0, 720, 900)
+
+
+def test_layout_geometry_right_half():
+    assert macos.layout_geometry("right", 1440, 900) == (720, 0, 720, 900)
+
+
+def test_layout_geometry_full():
+    assert macos.layout_geometry("full", 1440, 900) == (0, 0, 1440, 900)
+
+
+def test_layout_geometry_unknown_is_none():
+    assert macos.layout_geometry("sideways", 1440, 900) is None
+
+
+def test_script_window_layout_reads_screen_inside_script():
+    script = macos.script_window_layout("right")
+    assert "bounds of window of desktop" in script
+    assert "0.5" in script
+    assert macos.script_window_layout("sideways") is None
+
+
+def test_snap_off_macos_is_false_not_raise():
+    if sys.platform == "darwin":
+        return
+    assert macos.snap_front_window("left") is False
+    assert macos.snap_front_window("bogus") is False
+    assert macos.volume_get() is None
+    assert macos.cpu_brand() is None
+    assert macos.load_average() == {}

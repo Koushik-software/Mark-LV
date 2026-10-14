@@ -132,3 +132,77 @@ def test_parse_duration_rejects_nonsense():
     assert _parse_duration("soon") is None
     assert _parse_duration("10 minuets") is None
     assert _parse_duration("") is None
+
+
+# ── stopwatch (core/timers.py) ───────────────────────────────────────────────
+
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, dt):
+        self.t += dt
+
+
+def test_stopwatch_counts_up():
+    from core.timers import Stopwatch
+    c = FakeClock()
+    sw = Stopwatch(clock=c)
+    assert sw.start() is True
+    c.advance(5)
+    assert sw.elapsed() == 5
+    c.advance(3)
+    assert sw.elapsed() == 8
+
+
+def test_stopwatch_start_twice_is_false():
+    from core.timers import Stopwatch
+    sw = Stopwatch(clock=FakeClock())
+    assert sw.start() is True
+    assert sw.start() is False
+
+
+def test_stopwatch_pause_resume_accumulates():
+    from core.timers import Stopwatch
+    c = FakeClock()
+    sw = Stopwatch(clock=c)
+    sw.start(); c.advance(10)
+    assert sw.stop() == 10
+    assert sw.running is False
+    c.advance(100)               # paused time must not count
+    assert sw.elapsed() == 10
+    sw.start(); c.advance(5)
+    assert sw.elapsed() == 15
+
+
+def test_stopwatch_laps():
+    from core.timers import Stopwatch
+    c = FakeClock()
+    sw = Stopwatch(clock=c)
+    sw.start()
+    c.advance(4); assert sw.lap() == 4
+    c.advance(6); assert sw.lap() == 10
+    assert sw.laps() == [4, 10]
+
+
+def test_stopwatch_reset():
+    from core.timers import Stopwatch
+    c = FakeClock()
+    sw = Stopwatch(clock=c)
+    sw.start(); c.advance(9); sw.lap()
+    sw.reset()
+    assert sw.elapsed() == 0
+    assert sw.laps() == []
+    assert sw.running is False
+
+
+def test_format_duration():
+    from core.timers import format_duration
+    assert format_duration(0) == "0:00"
+    assert format_duration(45) == "0:45"
+    assert format_duration(90) == "1:30"
+    assert format_duration(3600) == "1:00:00"
+    assert format_duration(3725) == "1:02:05"

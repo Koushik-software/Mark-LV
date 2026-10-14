@@ -135,6 +135,72 @@ class TimerManager:
         self._thread = None
 
 
+class Stopwatch:
+    """A single stopwatch: start, stop, lap, elapsed.
+
+    The plan groups stopwatch with timers, but the two are different animals: a
+    timer fires and disappears, a stopwatch *accumulates* and can be paused and
+    resumed. It shares the injectable clock so tests stay deterministic, and
+    holds no thread of its own — elapsed time is computed on read, so a paused
+    stopwatch costs nothing while the app idles."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._accumulated = 0.0     # seconds banked across previous runs
+        self._started_at: Optional[float] = None
+        self._laps: list[float] = []
+
+    @property
+    def running(self) -> bool:
+        return self._started_at is not None
+
+    def start(self) -> bool:
+        """Start or resume. False if it was already running."""
+        if self.running:
+            return False
+        self._started_at = self._clock()
+        return True
+
+    def stop(self) -> float:
+        """Pause and return the total elapsed seconds. 0 if it was not running."""
+        if not self.running:
+            return self.elapsed()
+        self._accumulated += self._clock() - self._started_at
+        self._started_at = None
+        return self._accumulated
+
+    def reset(self) -> None:
+        self._accumulated = 0.0
+        self._started_at = None
+        self._laps.clear()
+
+    def elapsed(self) -> float:
+        """Total elapsed seconds, counting the current run if it is going."""
+        total = self._accumulated
+        if self.running:
+            total += self._clock() - self._started_at
+        return total
+
+    def lap(self) -> float:
+        """Record and return the current elapsed time as a lap."""
+        t = self.elapsed()
+        self._laps.append(t)
+        return t
+
+    def laps(self) -> list[float]:
+        return list(self._laps)
+
+
+def format_duration(seconds: float) -> str:
+    """Human-readable H:MM:SS / M:SS, for timers, stopwatches and the HUD. Pure."""
+    total = max(0, int(round(seconds)))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
 # ── One manager for the process ──────────────────────────────────────────────
 _manager: Optional[TimerManager] = None
 
@@ -149,3 +215,14 @@ def get_manager() -> TimerManager:
 def bind_notifier(fn: Callable[[str], None]) -> None:
     """Register how a fired timer is announced. Called once from main.py."""
     get_manager()._notifier = fn
+
+
+# ── One stopwatch for the process ────────────────────────────────────────────
+_stopwatch: Optional[Stopwatch] = None
+
+
+def get_stopwatch() -> Stopwatch:
+    global _stopwatch
+    if _stopwatch is None:
+        _stopwatch = Stopwatch()
+    return _stopwatch

@@ -159,6 +159,12 @@ def get_system_status() -> dict:
             if batt.get("present"):
                 status["battery_percent"] = batt.get("percent")
                 status["battery_charging"] = batt.get("charging")
+            brand = macos.cpu_brand()
+            if brand:
+                status["cpu_brand"] = brand
+            load = macos.load_average()
+            if load:
+                status["load"] = load
         except Exception:
             pass
 

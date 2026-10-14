@@ -250,6 +250,65 @@ def count() -> int:
             return -1
 
 
+# ── duplicates and category tagging ──────────────────────────────────────────
+
+_WS_RE = re.compile(r"\s+")
+
+
+def normalize_value(value: str) -> str:
+    """Fold a value to a comparison key: case, surrounding punctuation and
+    runs of whitespace are ignored, so 'Buy milk.' and 'buy  milk' collide.
+    Pure — this is the definition of "exact duplicate" the store uses."""
+    v = _WS_RE.sub(" ", (value or "").strip().lower())
+    return v.strip(" \t.,;:!?\"'")
+
+
+def find_duplicates() -> list[dict]:
+    """Entries that share the same normalized value within a category.
+
+    Read-only: the JSON stays the source of truth, so this *reports* rather than
+    deletes. Each group lists the keys that collide so a caller can decide which
+    to keep. Returns [] when the index is unavailable."""
+    conn = _connect()
+    if conn is None:
+        return []
+    with _lock:
+        try:
+            rows = conn.execute(
+                "SELECT category, key, value, updated FROM entries").fetchall()
+        except Exception:
+            return []
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for cat, key, value, updated in rows:
+        norm = normalize_value(value)
+        if not norm:
+            continue
+        groups.setdefault((cat, norm), []).append(
+            {"key": key, "value": value, "updated": updated})
+    out: list[dict] = []
+    for (cat, norm), members in groups.items():
+        if len(members) > 1:
+            out.append({"category": cat, "normalized": norm,
+                        "count": len(members), "entries": members})
+    out.sort(key=lambda g: g["count"], reverse=True)
+    return out
+
+
+def category_counts() -> dict:
+    """Number of indexed entries per category, for the HUD / diagnostics."""
+    conn = _connect()
+    if conn is None:
+        return {}
+    with _lock:
+        try:
+            rows = conn.execute(
+                "SELECT category, COUNT(*) FROM entries GROUP BY category"
+            ).fetchall()
+        except Exception:
+            return {}
+    return {cat: n for cat, n in rows}
+
+
 def reset_for_tests() -> None:
     """Close and forget the cached connection. Tests point DB_PATH elsewhere."""
     global _conn, _fts5

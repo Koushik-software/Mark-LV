@@ -132,3 +132,50 @@ def test_fts_query_neutralises_operators(store):
     # syntax; single-char words are dropped; an all-punctuation query is empty.
     assert ms._fts_query('NEAR "beta" *') == '"NEAR" OR "beta"'
     assert ms._fts_query("!!!") == ""
+
+
+# ── duplicates and category tagging ──────────────────────────────────────────
+
+def test_normalize_value_folds_case_space_punctuation(store):
+    assert ms.normalize_value("Buy Milk.") == "buy milk"
+    assert ms.normalize_value("buy  milk") == "buy milk"
+    assert ms.normalize_value('  "Buy Milk"  ') == "buy milk"
+    assert ms.normalize_value("") == ""
+
+
+def test_find_duplicates_reports_collisions(store):
+    store.import_memory({
+        "notes": {
+            "a": {"value": "Buy milk", "updated": "2026-01-01"},
+            "b": {"value": "buy  milk.", "updated": "2026-01-02"},
+            "c": {"value": "Call plumber", "updated": "2026-01-03"},
+        }
+    })
+    dups = store.find_duplicates()
+    assert len(dups) == 1
+    assert dups[0]["category"] == "notes"
+    assert dups[0]["count"] == 2
+    assert {e["key"] for e in dups[0]["entries"]} == {"a", "b"}
+
+
+def test_find_duplicates_ignores_same_value_across_categories(store):
+    store.import_memory({
+        "notes": {"a": {"value": "same"}},
+        "wishes": {"b": {"value": "same"}},
+    })
+    assert store.find_duplicates() == []      # a duplicate is per-category
+
+
+def test_find_duplicates_none_when_unique(store):
+    store.import_memory({"notes": {"a": {"value": "one"},
+                                   "b": {"value": "two"}}})
+    assert store.find_duplicates() == []
+
+
+def test_category_counts(store):
+    store.import_memory({
+        "notes": {"a": {"value": "x"}, "b": {"value": "y"}},
+        "identity": {"name": {"value": "Ada"}},
+    })
+    assert store.category_counts() == {"notes": 2, "identity": 1}
+

@@ -23,10 +23,12 @@ Planned stages (see the user's audit plan):
 - **A2 (done)** — test harness + baseline tests
 - **C (done)** — `core/permissions.py`, 4 privilege tiers, wired into dispatch
 - **B (done)** — `core/sanitizer.py` + `core/planner.py` + `plan_task` action
-- **D** — macOS Big Sur / Intel telemetry, brightness, window management
-- **E** — `actions/productivity.py` + `actions/developer.py`
-- **F** — Stargate Atlantis HUD theme in `ui.py`
-- **G** — SQLite + FTS5 memory store
+- **D (done)** — macOS Big Sur / Intel telemetry (battery, thermal, CPU brand,
+  load), brightness, volume, window management (incl. named layouts)
+- **E (done)** — `actions/productivity.py` (file-backed notes, timers, stopwatch)
+  + `actions/developer.py`
+- **F (skipped)** — Stargate Atlantis HUD theme in `ui.py` — *user instructed to skip*
+- **G (done)** — SQLite + FTS5 memory store (incl. duplicate detection)
 
 ## Permission system (Stage C)
 
@@ -107,6 +109,18 @@ Mac that cannot answer still gets a working assistant.
 - Brightness has no built-in macOS read/set. `core/macos.py` uses the `brightness`
   CLI (brew) when present, else relative F2/F1 key codes (144/145). Without the
   CLI `brightness_get()` returns `None`, so the undo path correctly declines.
+- Telemetry also carries `cpu_brand` (`sysctl -n machdep.cpu.brand_string`) and
+  1/5/15-minute `load` (`sysctl -n vm.loadavg`), plus `cpu_core_count()`.
+- Volume lives in `core/macos.py` too: `volume_get()` / `volume_set()` / `mute()`.
+  `set volume` **unmutes**, so the setter reads the mute flag inside the same
+  AppleScript and restores it — a muted Mac must never become audible. This
+  deliberately relaxes the "route macOS calls only through macos.py" rule for
+  `computer_settings.py`, which now delegates its Darwin volume branches here.
+- Named window layouts live in `WINDOW_LAYOUTS` (left/right/top/bottom, four
+  corners, full, center) with `resolve_layout()` handling spoken aliases
+  ("maximize" → full, "left half" → left). Geometry is computed **inside** the
+  AppleScript from the desktop bounds, and `layout_geometry()` is a pure mirror
+  of that math for tests. `actions/mac_control.py` exposes it as `window_layout`.
 - Window ops (System Events) need **Accessibility** permission; without it
   osascript returns -1743 and the functions report unavailable.
 - **macOS exposes no CPU temperature.** Do not fake it. `system_monitor` and
@@ -121,8 +135,15 @@ Mac that cannot answer still gets a working assistant.
   (which uses the OS scheduler and survives quitting). Clock and notifier are
   **injectable** and firing is an explicit `tick()`, so tests are deterministic.
   `main.py` binds the notifier to `speak` and starts the poll thread.
-- `actions/productivity.py` — notes go through the existing memory store
-  (category `notes`), so they stay recallable; timers use `core/timers.py`.
+- `core/timers.py` also holds `Stopwatch` (start/stop/resume/lap/reset, same
+  injectable clock) and `format_duration()` (H:MM:SS). `get_stopwatch()` is the
+  process-wide instance.
+- `actions/productivity.py` — notes are **plain text files** in
+  `~/Documents/JARVIS Notes/` (override `NOTES_DIR` for tests). Filenames go
+  through `safe_note_name()`, which strips separators and traversal, and
+  `_note_path()` re-checks containment. Each note is *also* mirrored into the
+  memory store (category `notes`) so voice recall still works — the file is the
+  record, memory is the index. Timers and the stopwatch use `core/timers.py`.
 - `actions/developer.py` — the one tool that runs commands. Allowlist by
   **executable basename** (`git`, `python`, `pytest`, `pip`, `node`, `npm`, `ls`,
   `cat`), git subcommand denylist (`push`/`reset`/`clean`/`remote`/…), cwd
@@ -141,11 +162,16 @@ index, not a replacement. The JSON stays the source of truth.
 - `search_memory()` uses the index when available and falls back to the old
   lexical scorer otherwise. `export_memory()` merges over a base dict so keys the
   DB does not model (`sessions`, `monitors`) survive.
+- `find_duplicates()` reports entries sharing a `normalize_value()` (case/space/
+  punctuation-folded) value **within a category** — it reports, it never deletes,
+  because the JSON is the source of truth. `category_counts()` is the per-category
+  tally for diagnostics.
 - Degrades safely: no FTS5 → LIKE; no DB → JSON-only. A broken index must never
   cost the user their memory.
 - The DB is `memory/jarvis_memory.db` (git-ignored). Tests redirect `DB_PATH` via
   the `isolated_memory` fixture in `tests/conftest.py` — **keep that fixture in
-  step** or tests will write the developer's real DB.
+  step** or tests will write the developer's real DB. `tests/test_productivity.py`
+  isolates both the notes dir **and** the memory mirror for the same reason.
 
 ## Line endings
 
