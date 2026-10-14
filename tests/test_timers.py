@@ -1,0 +1,100 @@
+"""Tests for core/timers.py.
+
+The clock is injected, so firing is deterministic — no sleeping, no threads.
+"""
+from __future__ import annotations
+
+from core.timers import TimerManager
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, secs):
+        self.t += secs
+
+
+def _mgr():
+    fired = []
+    clock = FakeClock()
+    m = TimerManager(notifier=fired.append, clock=clock)
+    return m, clock, fired
+
+
+def test_timer_fires_after_its_duration():
+    m, clock, fired = _mgr()
+    m.start(60, "tea")
+    assert m.tick() == []
+    clock.advance(59)
+    assert m.tick() == []
+    clock.advance(2)
+    assert m.tick() == ["tea"]
+    assert len(fired) == 1
+    assert "tea" in fired[0]
+
+
+def test_timer_fires_only_once():
+    m, clock, fired = _mgr()
+    m.start(10, "x")
+    clock.advance(11)
+    m.tick()
+    clock.advance(100)
+    assert m.tick() == []
+    assert len(fired) == 1
+
+
+def test_duration_is_clamped():
+    m, _, _ = _mgr()
+    m.start(0, "tiny")            # below 1s → clamped up
+    m.start(10 ** 9, "huge")      # above 24h → clamped down
+    active = m.list_active()
+    assert active[0]["seconds"] == 1.0
+    assert active[1]["seconds"] == 24 * 3600.0
+
+
+def test_cancel_removes_timer():
+    m, clock, fired = _mgr()
+    tid = m.start(30, "x")
+    assert m.cancel(tid) is True
+    clock.advance(60)
+    assert m.tick() == []
+    assert fired == []
+
+
+def test_cancel_unknown_is_false():
+    m, _, _ = _mgr()
+    assert m.cancel("nope") is False
+
+
+def test_cancel_all():
+    m, _, _ = _mgr()
+    m.start(10, "a"); m.start(20, "b")
+    assert m.cancel_all() == 2
+    assert m.list_active() == []
+
+
+def test_remaining_counts_down():
+    m, clock, _ = _mgr()
+    m.start(100, "x")
+    clock.advance(30)
+    assert m.list_active()[0]["remaining"] == 70
+
+
+def test_notifier_error_does_not_propagate():
+    def bad(_msg):
+        raise RuntimeError("speaker exploded")
+    m = TimerManager(notifier=bad, clock=FakeClock())
+    m.start(1, "x")
+    m._clock.advance(2)
+    assert m.tick() == ["x"]      # label still returned, no raise
+
+
+def test_no_notifier_is_fine():
+    m = TimerManager(clock=FakeClock())
+    m.start(1, "x")
+    m._clock.advance(2)
+    assert m.tick() == ["x"]

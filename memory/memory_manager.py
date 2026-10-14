@@ -71,6 +71,19 @@ def load_memory() -> dict:
             print(f"[Memory] ⚠️ Load error: {e}")
             return _empty_memory()
 
+
+def sync_index(memory: dict | None = None) -> dict:
+    """Mirror the JSON memory into the SQLite/FTS5 index (memory_store.py).
+
+    Best-effort: the JSON is the source of truth, so a failure here costs only
+    the faster search, never the memory itself. Called after every save."""
+    try:
+        from memory import memory_store
+        return memory_store.sync(memory if memory is not None else load_memory())
+    except Exception as e:
+        print(f"[Memory] index sync skipped: {e}")
+        return {"rows": -1, "fts": False}
+
 def _all_entries(memory: dict) -> list[tuple]:
     entries = []
     for cat, items in memory.items():
@@ -125,6 +138,9 @@ def save_memory(memory: dict) -> None:
             json.dumps(memory, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+    # Keep the search index in step with what was just written. Best-effort and
+    # outside the lock, so a slow disk here never blocks a memory read.
+    sync_index(memory)
 
 
 def _truncate_value(val: str) -> str:
@@ -351,7 +367,28 @@ def search_memory(query: str, limit: int = 8) -> str:
     """Find stored facts matching `query`. Backs the recall_memory tool.
 
     An empty query is treated as "show me everything you know", capped - the
-    model asks that when the user says "what do you remember about me?"."""
+    model asks that when the user says "what do you remember about me?".
+
+    Uses the SQLite/FTS5 index when it is available (ranked, scales past a few
+    hundred entries) and falls back to the in-memory lexical scorer otherwise.
+    Either way the JSON is the source of truth; this only changes how fast and
+    how well the search ranks."""
+    limit = max(1, limit)
+
+    indexed = _search_index(query, limit)
+    if indexed is not None:
+        rows = indexed
+        if not rows:
+            return (f"Nothing stored about '{query}'." if query
+                    else "I have not stored anything about this person yet.")
+        lines = [f"{r['category']}/{_pretty(r['key'])}: {r['value']}"
+                 for r in rows]
+        head = (f"Stored facts matching '{query}':" if query
+                else "Everything currently stored:")
+        more = (f"\n(+more — search with a narrower keyword)"
+                if len(rows) >= limit else "")
+        return head + "\n" + "\n".join(lines) + more
+
     memory = load_memory()
     words  = [w for w in re.split(r"[^\w]+", (query or "").lower()) if len(w) > 1]
 
@@ -372,12 +409,25 @@ def search_memory(query: str, limit: int = 8) -> str:
                 else "I have not stored anything about this person yet.")
 
     rows.sort(key=lambda r: (-r[0], r[2]))
-    lines = [f"{cat}/{_pretty(key)}: {val}" for _s, cat, key, val in rows[:max(1, limit)]]
+    lines = [f"{cat}/{_pretty(key)}: {val}" for _s, cat, key, val in rows[:limit]]
     head  = (f"Stored facts matching '{query}':" if query
              else "Everything currently stored:")
     more  = (f"\n(+{len(rows) - len(lines)} more — search with a narrower keyword)"
              if len(rows) > len(lines) else "")
     return head + "\n" + "\n".join(lines) + more
+
+
+def _search_index(query: str, limit: int) -> list[dict] | None:
+    """Rows from the FTS5 index, or None when the index is unavailable (so the
+    caller falls back to the lexical scorer). An empty list means the index is
+    working and genuinely found nothing."""
+    try:
+        from memory import memory_store
+        if memory_store.count() < 0:
+            return None                  # index not usable
+        return memory_store.search(query, limit=limit)
+    except Exception:
+        return None
 
 
 def all_entries_for_ui() -> list[dict]:

@@ -22,6 +22,7 @@ except ImportError:
     _PYPERCLIP = False
 
 from core import confirm
+from core import macos
 from core.undo import push_undo
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
@@ -132,6 +133,11 @@ def brightness_get() -> int | None:
                 capture_output=True, text=True, timeout=5, **_WIN_HIDE
             )
             return max(0, min(100, int(r.stdout.strip())))
+        if _OS == "Darwin":
+            # Only readable with the `brightness` CLI (brew install brightness).
+            # Without it macOS offers no way to read the value, so this returns
+            # None and the undo path correctly declines to register.
+            return macos.brightness_get()
         if _OS == "Linux" and subprocess.run(
                 ["which", "brightnessctl"], capture_output=True).returncode == 0:
             cur = int(subprocess.run(["brightnessctl", "get"],
@@ -155,6 +161,8 @@ def brightness_set(value: int) -> None:
              f".WmiSetBrightness(1, {value})"],
             capture_output=True, timeout=5, **_WIN_HIDE
         )
+    elif _OS == "Darwin":
+        macos.brightness_set(value)
     elif _OS == "Linux":
         subprocess.run(["brightnessctl", "set", f"{value}%"], capture_output=True)
 
@@ -188,9 +196,11 @@ def volume_set(value: int):
 
 def brightness_up():
     if _OS == "Darwin":
-        subprocess.run(["osascript", "-e",
-            'tell application "System Events" to key code 144'],
-            capture_output=True)
+        # Exact set when the `brightness` CLI is present, else a relative nudge
+        # via the F2 key code. macos.brightness_step handles that choice.
+        cur = macos.brightness_get()
+        if cur is None or not macos.brightness_set(min(100, cur + 10)):
+            macos.brightness_step(1)
     elif _OS == "Linux":
         if subprocess.run(["which", "brightnessctl"],
                 capture_output=True).returncode == 0:
@@ -217,9 +227,9 @@ def brightness_up():
 
 def brightness_down():
     if _OS == "Darwin":
-        subprocess.run(["osascript", "-e",
-            'tell application "System Events" to key code 145'],
-            capture_output=True)
+        cur = macos.brightness_get()
+        if cur is None or not macos.brightness_set(max(0, cur - 10)):
+            macos.brightness_step(-1)
     elif _OS == "Linux":
         if subprocess.run(["which", "brightnessctl"],
                 capture_output=True).returncode == 0:

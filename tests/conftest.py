@@ -28,13 +28,23 @@ def repo_root() -> Path:
 @pytest.fixture
 def isolated_memory(tmp_path, monkeypatch):
     """Point memory_manager at a throwaway long_term.json so tests never touch
-    the real store."""
+    the real store.
+
+    Also redirects the SQLite/FTS5 index (memory_store) at a throwaway DB and
+    clears its cached connection — otherwise save_memory() would sync the test's
+    data into the developer's real jarvis_memory.db, and search_memory() would
+    read it back."""
     from memory import memory_manager as mm
+    from memory import memory_store as ms
 
     target = tmp_path / "long_term.json"
     monkeypatch.setattr(mm, "MEMORY_PATH", target)
     monkeypatch.setattr(mm, "_trim_notifier", None)
-    return target
+
+    ms.reset_for_tests()
+    monkeypatch.setattr(ms, "DB_PATH", tmp_path / "jarvis_memory.db")
+    yield target
+    ms.reset_for_tests()
 
 
 @pytest.fixture

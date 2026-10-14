@@ -129,3 +129,37 @@ def test_trim_to_limit_drops_oldest(isolated_memory, monkeypatch, capsys):
     trimmed = mm._trim_to_limit(memory)
     assert len(json.dumps(trimmed, ensure_ascii=False)) <= 200
     assert "k0" not in trimmed["notes"]            # oldest went first
+
+
+# ── Stage G: SQLite/FTS5 index integration ───────────────────────────────────
+# These prove the JSON stays the source of truth while the index mirrors it, and
+# that search falls back cleanly when the index is unavailable.
+
+def test_save_memory_populates_the_index(isolated_memory):
+    from memory import memory_store as ms
+    mm.remember("sister", "Ayse", category="relationships")
+    assert ms.count() >= 1
+    rows = ms.search("Ayse")
+    assert any(r["value"] == "Ayse" for r in rows)
+
+
+def test_search_memory_uses_index(isolated_memory):
+    mm.remember("hobby", "fencing on Tuesdays", category="preferences")
+    out = mm.search_memory("fencing")
+    assert "fencing on Tuesdays" in out
+
+
+def test_forget_removes_from_index(isolated_memory):
+    from memory import memory_store as ms
+    mm.remember("temp", "ephemeral fact", category="notes")
+    assert ms.search("ephemeral")            # present
+    mm.forget("temp", category="notes")
+    assert not ms.search("ephemeral")        # gone from the index too
+
+
+def test_search_falls_back_when_index_unavailable(isolated_memory, monkeypatch):
+    from memory import memory_store as ms
+    mm.remember("pet", "a cat named Turing", category="notes")
+    monkeypatch.setattr(ms, "count", lambda: -1)      # pretend the DB is broken
+    out = mm.search_memory("Turing")
+    assert "Turing" in out                            # lexical fallback still works

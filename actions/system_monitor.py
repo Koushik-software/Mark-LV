@@ -107,7 +107,21 @@ def _get_cpu_temp() -> float:
         except Exception:
             pass
 
+    # macOS: psutil exposes no temperature sensors here, and there is no
+    # zero-subprocess alternative. Leave temp as N/A (see _mac_thermal, which
+    # reports the honest "running hot" signal instead).
     return -1.0
+
+
+def _mac_thermal() -> dict:
+    """macOS thermal throttle info, or {} off macOS / when unavailable."""
+    if _OS != "Darwin":
+        return {}
+    try:
+        from core import macos
+        return macos.thermal_status() or {}
+    except Exception:
+        return {}
 
 
 def get_system_status() -> dict:
@@ -122,7 +136,7 @@ def get_system_status() -> dict:
     uptime_h    = int(uptime_secs // 3600)
     uptime_m    = int((uptime_secs % 3600) // 60)
 
-    return {
+    status = {
         "cpu_percent":   round(cpu, 1),
         "ram_percent":   round(ram.percent, 1),
         "ram_used_gb":   round(ram.used   / 1024 ** 3, 1),
@@ -132,6 +146,23 @@ def get_system_status() -> dict:
         "uptime":        f"{uptime_h}h {uptime_m}m",
         "process_count": len(psutil.pids()),
     }
+
+    # macOS has no readable CPU temperature; surface the thermal throttle level
+    # (and battery) instead, so "how's the machine doing" is still answerable.
+    if _OS == "Darwin":
+        therm = _mac_thermal()
+        if therm:
+            status["mac_thermal"] = therm
+        try:
+            from core import macos
+            batt = macos.battery_status()
+            if batt.get("present"):
+                status["battery_percent"] = batt.get("percent")
+                status["battery_charging"] = batt.get("charging")
+        except Exception:
+            pass
+
+    return status
 
 
 class SystemMonitor:

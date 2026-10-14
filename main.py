@@ -80,6 +80,7 @@ from core                      import confirm as confirm_gate
 from core                      import permissions as perms
 from core                      import planner
 from core                      import sanitizer
+from core                      import timers
 from core                      import audio_devices
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
@@ -669,6 +670,24 @@ class JarvisLive:
         self._planner.set_tools(_plan_tools)
         planner.bind_runner(self._plan_and_run)
         print(f"[Planner] {len(_plan_tools)} tools available to plan against.")
+
+        # ── Timers ───────────────────────────────────────────────────────────
+        # In-process countdown timers (core/timers.py). They announce through the
+        # same speak() path as everything else, and the poll thread fires them.
+        timers.bind_notifier(self.speak)
+        timers.get_manager().start_thread()
+
+        # ── Memory index ─────────────────────────────────────────────────────
+        # Rebuild the SQLite/FTS5 search index from long_term.json once at
+        # startup, so a memory written before this feature existed is searchable
+        # immediately. Best-effort — the JSON remains the source of truth.
+        try:
+            from memory.memory_manager import sync_index as _sync_index
+            _info = _sync_index()
+            print(f"[Memory] index: {_info.get('rows', -1)} rows, "
+                  f"fts={'on' if _info.get('fts') else 'off'}")
+        except Exception as _e:
+            print(f"[Memory] index unavailable: {_e}")
 
         # ── Wake word ────────────────────────────────────────────────────────
         # _awake gates the mic (see _listen_audio) and the background speakers.
