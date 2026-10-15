@@ -48,3 +48,9 @@ desktop.ini
 logs/
 downloads/
 screenshots/
+
+# ── Exported artifacts ────────────────────────────────────────────────────────
+# Zip exports and git bundles are how the project is handed to another machine;
+# they are build output, they duplicate the whole history, and they are large.
+*.bundle
+Mark-LV-Jarvis*.zip
