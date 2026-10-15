@@ -29,6 +29,8 @@ Planned stages (see the user's audit plan):
   + `actions/developer.py`
 - **F (skipped)** — Stargate Atlantis HUD theme in `ui.py` — *user instructed to skip*
 - **G (done)** — SQLite + FTS5 memory store (incl. duplicate detection)
+- **H (done)** — third selectable HUD: `core/hitech_hud.py` (native QPainter
+  instrument cluster) + a 3-way selector in the ⚙ controls drawer
 
 ## Permission system (Stage C)
 

@@ -49,6 +49,7 @@ It's not just an assistant — it's an extension of your digital life.
 | 🪜 Model Ladder | Nine Gemini models in one measured order — a quota, a timeout or an outage steps to the next rung instead of failing |
 | 🎙️ Real-time Voice | Ultra-low latency conversation in any language via Gemini Live API |
 | 🎨 Live Theming | Recolour the entire HUD from a hue wheel or hex — the avatar retints with it |
+| 🛰️ Three HUD Styles | Switch the centrepiece — animated face, reactor core, or a **HI-TECH instrument cluster** (orbital rings, radar sweep, live CPU/RAM/NET telemetry, voice console and bulletin ticker) — from the ⚙ drawer, remembered across restarts |
 | 〰️ Reactive HUD | Waveform pulses to real audio — your mic while listening, JARVIS while speaking |
 | 🎙️ Voice Picker | Choose from 5 native Gemini voices and switch live from the UI — no restart |
 | ♾️ Unlimited Sessions | Sliding-window context compression — one conversation can last for hours |

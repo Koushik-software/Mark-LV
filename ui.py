@@ -61,6 +61,13 @@ try:
 except Exception:      # pragma: no cover — HUD must never die over cosmetics
     HoloAvatar = None
 
+# The third centrepiece. Imported the same defensive way: if it cannot load,
+# the HUD simply is not offered and the other two are untouched.
+try:
+    from core.hitech_hud import HiTechHud
+except Exception:      # pragma: no cover
+    HiTechHud = None
+
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -433,6 +440,20 @@ class HudCanvas(QWidget):
             self.hud_style = "face"
         self._core_phase = 0.0
 
+        # The HI-TECH cluster. Built once and kept for the canvas's lifetime,
+        # exactly like the avatar — it holds no timer of its own, so it costs
+        # nothing while another HUD is showing and switching is instant.
+        self._hitech = None
+        if HiTechHud is not None:
+            try:
+                self._hitech = HiTechHud(assistant_name)
+            except Exception:
+                self._hitech = None
+        # Give the HI-TECH HUD its activation cue when it is the chosen style
+        # at startup (the toggle path handles later switches).
+        if self._hitech is not None and self.hud_style == "hitech":
+            self._hitech.activate()
+
         self._tick       = 0
         self._scale      = 1.0
         self._tgt_scale  = 1.0
@@ -638,6 +659,20 @@ class HudCanvas(QWidget):
             sp = 0.38 if self.speaking else (0.30 if amp > 0.02 else 0.15)
             self._scale += (self._tgt_scale - self._scale) * sp
             self._halo  += (self._tgt_halo  - self._halo)  * sp
+
+        # HI-TECH cluster. Fed the same smoothed audio level the other two use,
+        # plus the real system telemetry the metric timer already collects — so
+        # nothing on that screen is simulated. It owns no timer; this single
+        # call is its whole animation budget.
+        if self._hitech is not None and self.hud_style == "hitech":
+            try:
+                snap = _metrics.snapshot()
+                self._hitech.step(dt, amp, self.speaking, self.muted, self.state,
+                                  snap.get("cpu", 0.0), snap.get("mem", 0.0),
+                                  snap.get("net", 0.0), snap.get("gpu", -1.0),
+                                  snap.get("tmp", -1.0))
+            except Exception:
+                pass
 
         self._blink_tick += 1
         if self._blink_tick >= 38:
@@ -858,6 +893,20 @@ class HudCanvas(QWidget):
             self._grid_key   = _gkey
         p.drawPixmap(0, 0, self._grid_cache)
 
+        # ── HI-TECH cluster ─────────────────────────────────────────────────
+        # A full-bleed dashboard: it draws its own frame, panels, console and
+        # ticker, so it takes the whole canvas and the standard status line and
+        # waveform below are skipped (they would overlap its layout).
+        if self.hud_style == "hitech" and self._hitech is not None:
+            try:
+                self._hitech.paint(p, W, H, C)
+            except Exception:
+                # Never let a cosmetic failure blank the HUD — fall back to the
+                # reactor core, which is always available.
+                self._paint_core(p, cx, cy, min(W * 0.46, H * 0.42), W, H)
+            p.end()
+            return
+
         # ── holographic head ────────────────────────────────────────────────
         # Sized to the band between the top of the canvas and the status line,
         # capped by width, so it fills the HUD at any window size — including
@@ -884,9 +933,8 @@ class HudCanvas(QWidget):
             self._avatar.paint(p, cx, _head_cy, _r_head, _main, _acc, qcol(C.BG))
 
         # reactor core — the other centrepiece, and the fallback if the head
-        # could not be built. There is no third path: the old face.png branch
-        # was unreachable (no such file ships) and the bare orb it fell through
-        # to is what this replaces.
+        # could not be built. The HI-TECH cluster returned above; this branch
+        # covers "core" and any unrecognised style.
         else:
             _band_t = 12.0
             _band_h = max(60.0, _sy_status - 12.0 - _band_t)
@@ -4314,8 +4362,58 @@ class MainWindow(QMainWindow):
         self._hud_btn.clicked.connect(self._toggle_hud_style)
         self._refresh_hud_btn()
 
+        # Three-way HUD selector. The old single button only toggled between two
+        # styles; with a third there is no sensible toggle, so the same control
+        # becomes an explicit chooser. It stays in this drawer, uses the same
+        # panel styling, and offers exactly the styles that actually loaded.
+        self._hud_sel = QComboBox()
+        self._hud_sel.setFixedHeight(26)
+        self._hud_sel.setFont(QFont("Courier New", 7))
+        self._hud_sel.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._hud_sel.setStyleSheet(f"""
+            QComboBox {{ background: {C.PANEL2}; color: {C.PRI};
+                border: 1px solid {C.BORDER_A}; border-radius: 3px;
+                padding: 0 8px; }}
+            QComboBox:hover {{ color: {C.WHITE}; border: 1px solid {C.BORDER_B}; }}
+            QComboBox QAbstractItemView {{ background: {C.PANEL}; color: {C.TEXT};
+                border: 1px solid {C.BORDER_B};
+                selection-background-color: {C.PRI_GHO}; }}""")
+        for key, label in self._hud_choices():
+            self._hud_sel.addItem(label, key)
+        self._hud_sel.currentIndexChanged.connect(self._on_hud_selected)
+        self._sync_hud_sel()
+        lay.addWidget(self._hud_sel)
+
         w.adjustSize()
         return w
+
+    @staticmethod
+    def _hud_choices():
+        """The selectable centrepieces, in menu order. HI-TECH is offered only
+        if its painter actually imported, so a stripped build degrades cleanly
+        to the original two rather than showing a dead option."""
+        choices = [("face", "🧑  HUD 1 · ANIMATED FACE"),
+                   ("core", "◉  HUD 2 · REACTOR CORE")]
+        if HiTechHud is not None:
+            choices.append(("hitech", "🛰  HI-TECH HUD"))
+        return choices
+
+    def _sync_hud_sel(self):
+        """Point the combo at the saved style without re-firing the handler."""
+        from memory.config_manager import get_hud_style
+        want = get_hud_style()
+        idx = self._hud_sel.findData(want)
+        if idx < 0:
+            idx = 0
+        self._hud_sel.blockSignals(True)
+        self._hud_sel.setCurrentIndex(idx)
+        self._hud_sel.blockSignals(False)
+
+    def _on_hud_selected(self, _index: int):
+        key = self._hud_sel.currentData()
+        if not key:
+            return
+        self._set_hud_style(key)
 
     def _warm_wake_state(self) -> None:
         """Work out the wake-word state off the UI thread, once.
@@ -5139,39 +5237,65 @@ class MainWindow(QMainWindow):
 
     def _refresh_hud_btn(self):
         from memory.config_manager import get_hud_style
-        face = get_hud_style() == "face"
-        # Neither state is "off", so both read as active — this is a choice
-        # between two things, not a switch with a disabled side.
+        style_now = get_hud_style()
+        labels = {
+            "face":   "🧑  HUD: ANIMATED FACE",
+            "core":   "◉  HUD: REACTOR CORE",
+            "hitech": "🛰  HUD: HI-TECH",
+        }
+        tips = {
+            "face":   "An animated head that speaks your words and shows what "
+                      "JARVIS is doing. Tap to cycle to the reactor core.",
+            "core":   "A reactor core that turns with the state and moves with "
+                      "your voice. Tap to cycle to the HI-TECH cluster.",
+            "hitech": "The HI-TECH instrument cluster — rings, radar, telemetry "
+                      "and console. Tap to cycle back to the animated face.",
+        }
+        # Every state is a valid choice, so all read as active — this is a
+        # choice between things, not a switch with a disabled side.
         style = f"""
             QPushButton {{ background: {C.PANEL2}; color: {C.PRI};
                 border: 1px solid {C.BORDER_A}; border-radius: 3px;
                 text-align: left; padding: 0 8px; }}
             QPushButton:hover {{ color: {C.WHITE}; border: 1px solid {C.BORDER_B}; }}"""
-        self._hud_btn.setText("🧑  HUD: ANIMATED FACE" if face
-                              else "◉  HUD: REACTOR CORE")
+        self._hud_btn.setText(labels.get(style_now, labels["face"]))
         self._hud_btn.setStyleSheet(style)
-        self._hud_btn.setToolTip(
-            "An animated head that speaks your words and shows what JARVIS is "
-            "doing. Tap to switch to the reactor core."
-            if face else
-            "A reactor core that turns with the state and moves with your voice. "
-            "Tap to switch to the animated head.")
+        self._hud_btn.setToolTip(tips.get(style_now, tips["face"]))
+        # Keep the dropdown in step when the change came from the button.
+        if getattr(self, "_hud_sel", None) is not None:
+            self._sync_hud_sel()
 
     def _toggle_hud_style(self):
-        """Swap the centrepiece. Both objects stay in memory, so the change is
-        instant and switching back costs nothing."""
+        """Cycle the centrepiece (the drawer button). The dropdown offers the
+        same styles directly; both routes go through _set_hud_style."""
+        order = [k for k, _ in self._hud_choices()]
+        from memory.config_manager import get_hud_style
+        cur = get_hud_style()
+        try:
+            nxt = order[(order.index(cur) + 1) % len(order)]
+        except ValueError:
+            nxt = order[0]
+        self._set_hud_style(nxt)
+
+    def _set_hud_style(self, want: str):
+        """Apply a HUD style: persist it, swap the live canvas, refresh both
+        controls. The painter objects stay in memory, so the change is instant
+        and switching back costs nothing — no reload, no new timer."""
         from memory.config_manager import get_hud_style, save_hud_style
-        want = "core" if get_hud_style() == "face" else "face"
+        if want not in dict(self._hud_choices()):
+            return
         save_hud_style(want)
         try:
             self.hud.hud_style = want
+            if want == "hitech" and getattr(self.hud, "_hitech", None) is not None:
+                self.hud._hitech.activate()
             self.hud.update()
         except Exception:
             pass
         self._refresh_hud_btn()
-        self._log.append_log(
-            "SYS: HUD switched to the animated face." if want == "face"
-            else "SYS: HUD switched to the reactor core.")
+        pretty = {"face": "the animated face", "core": "the reactor core",
+                  "hitech": "the HI-TECH HUD"}.get(want, want)
+        self._log.append_log(f"SYS: HUD switched to {pretty}.")
 
     def _toggle_ptt(self):
         from memory.config_manager import (get_push_to_talk_enabled,
@@ -5550,6 +5674,14 @@ class MainWindow(QMainWindow):
     def _apply_state(self, state: str):
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
+        # Feed the real state transition to the HI-TECH event stream, if that
+        # HUD is loaded — no simulated events on its console.
+        ht = getattr(self.hud, "_hitech", None)
+        if ht is not None:
+            try:
+                ht.push_event(state)
+            except Exception:
+                pass
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False

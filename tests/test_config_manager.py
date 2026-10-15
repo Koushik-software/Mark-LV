@@ -51,6 +51,17 @@ def test_hud_style_rejects_unknown_value(isolated_config):
     assert cm.get_hud_style() == "core"
 
 
+def test_hud_style_accepts_hitech(isolated_config):
+    cm.save_hud_style("hitech")
+    assert cm.get_hud_style() == "hitech"
+    # A stored HI-TECH choice must survive a reload, not fall back to the face.
+    assert json.loads(isolated_config.read_text())["hud_style"] == "hitech"
+
+
+def test_hud_styles_are_exactly_the_three_offered(isolated_config):
+    assert set(cm.HUD_STYLES) == {"face", "core", "hitech"}
+
+
 def test_setters_do_not_clobber_siblings(isolated_config):
     cm.save_api_keys("k" * 30)
     cm.save_voice("Puck")
